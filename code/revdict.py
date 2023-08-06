@@ -129,7 +129,7 @@ def train(args):
     ## Hyperparams
     logger.debug("Setting up training environment")
 
-    model = models.ARBERTRevDict(args)
+    model = models.ARBERTRevDict(args).to(args.device)
 
     tokenizer = AutoTokenizer.from_pretrained("UBC-NLP/ARBERTv2")     
     model.train()
@@ -223,15 +223,9 @@ def train(args):
                 model.train()
 
         model.save(args.save_dir / "modelepoch.pt")
-        train_dataset.save(args.save_dir / "train_datasetepoch.pt")
             
-
     # 5. save result
     model.save(args.save_dir / "model.pt")
-    train_dataset.save(args.save_dir / "train_dataset.pt")
-    if args.dev_file:
-        valid_dataset.save(args.save_dir / "dev_dataset.pt")
-
 
 def eval(args):
     assert args.dev_file is not None, "Missing dataset for eval"

@@ -13,11 +13,11 @@ class ARBERTRevDict(nn.Module):
     def __init__(self, args) -> None:
         super().__init__()
         if args.resume_train:
-            self.base_model = AutoModel.from_pretrained(args.resume_file).to(args.device)
+            self.base_model = AutoModel.from_pretrained(args.resume_file)
             raise NotImplementedError()
         else:
             if args.from_pretrained:
-                self.base_model = AutoModel.from_pretrained("UBC-NLP/ARBERTv2").to(args.device)
+                self.base_model = AutoModel.from_pretrained("UBC-NLP/ARBERTv2")
             else:
                 model_config = AutoConfig.from_pretrained("UBC-NLP/ARBERTv2")
                 self.base_model = AutoModel.from_config(model_config)
