@@ -1,0 +1,13 @@
+__pycache__/
+.venv/
+.tb/
+data/*
+*.json
+*.pt
+*.zip
+scores.txt
+!data/README.md
+!data/trial-data_all.zip
+!data/train-data_all.zip
+.DS_Store
+code/models/*
