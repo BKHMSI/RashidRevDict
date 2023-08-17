@@ -6,8 +6,42 @@ import torch.nn.functional as F
 
 import data
 
-from transformers import AutoModel, AutoConfig
+from transformers import AutoModel, AutoConfig, AutoModelForSeq2SeqLM
+from transformers.modeling_outputs import Seq2SeqLMOutput
 
+class AraT5RevDict(nn.Module):
+    def __init__(self, args) -> None:
+        super().__init__()
+        if args.resume_train:
+            self.base_model = AutoModelForSeq2SeqLM.from_pretrained(args.resume_file)
+            raise NotImplementedError()
+        else:
+            if args.from_pretrained:
+                self.base_model = AutoModelForSeq2SeqLM.from_pretrained("UBC-NLP/AraT5v2-base-1024")
+            else:
+                model_config = AutoConfig.from_pretrained("UBC-NLP/AraT5v2-base-1024")
+                self.base_model = AutoModelForSeq2SeqLM.from_config(model_config)
+        
+        self.linear = nn.Linear(self.base_model.config.hidden_size, args.max_len)
+
+    def forward(self, input_ids, attention_mask, labels):
+        outputs:Seq2SeqLMOutput = self.base_model(input_ids=input_ids, 
+            attention_mask=attention_mask,
+            labels=labels,
+            return_dict=True
+        )        
+
+        pooled_emb = (outputs.encoder_last_hidden_state * attention_mask.unsqueeze(2)).sum(dim=1) / attention_mask.sum(dim=1).unsqueeze(1)
+
+        embedding = self.linear(pooled_emb)
+        return outputs.loss, embedding     
+
+    def save(self, file):
+        torch.save(self, file)
+
+    @staticmethod
+    def load(file):
+        return torch.load(file)
 
 class ARBERTRevDict(nn.Module):
     def __init__(self, args) -> None:
@@ -22,7 +56,7 @@ class ARBERTRevDict(nn.Module):
                 model_config = AutoConfig.from_pretrained("UBC-NLP/ARBERTv2")
                 self.base_model = AutoModel.from_config(model_config)
         
-        self.linear = nn.Linear(self.base_model.config.hidden_size, 256)
+        self.linear = nn.Linear(self.base_model.config.hidden_size, args.max_len)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         feats = self.base_model(input_ids=input_ids, attention_mask=attention_mask).pooler_output
