@@ -136,7 +136,7 @@ def train(args):
 
     # 3. declare optimizer & criterion
     ## Hyperparams
-    EPOCHS, LEARNING_RATE, BETA1, BETA2, WEIGHT_DECAY = 100, 1.0e-4, 0.9, 0.999, 1.0e-6
+    EPOCHS, LEARNING_RATE, BETA1, BETA2, WEIGHT_DECAY = 20, 1.0e-4, 0.9, 0.999, 1.0e-6
     optimizer = optim.AdamW(
         model.parameters(),
         lr=LEARNING_RATE,
@@ -148,34 +148,39 @@ def train(args):
 
     vec_tensor_key = f"{args.target_arch}_tensor"
 
+    best_cosine = 0
+
     # 4. train model
     for epoch in tqdm.trange(EPOCHS, desc="Epochs"):
         ## train loop
         pbar = tqdm.tqdm(
             desc=f"Train {epoch}", total=len(train_dataset), disable=None, leave=False
         )
-        for word, gloss, electra, sgns in train_dataloader:
+        for ids, word, gloss, electra, sgns in train_dataloader:
             optimizer.zero_grad()
 
             word_tokens = tokenizer(word, padding=True, return_tensors='pt').to(args.device)
             gloss_tokens = tokenizer(gloss, padding=True, return_tensors='pt').to(args.device)
-            sgns_embs = torch.stack(sgns, dim=1).to(args.device)
-            electra_embs = torch.stack(electra, dim=1).to(args.device)
-            electra_embs = electra_embs.float()
 
+            if args.target_arch == "electra":
+                target_embs = torch.stack(electra, dim=1).to(args.device)
+            else:
+                target_embs = torch.stack(sgns, dim=1).to(args.device)
+
+            target_embs = target_embs.float()
             pred = model(**gloss_tokens)
-            loss = criterion(pred, electra_embs)
+            loss = criterion(pred, target_embs)
             loss.backward()
             # keep track of the train loss for this step
             next_step = next(train_step)
             summary_writer.add_scalar(
                 "revdict-train/cos",
-                F.cosine_similarity(pred, electra_embs).mean().item(),
+                F.cosine_similarity(pred, target_embs).mean().item(),
                 next_step,
             )
             summary_writer.add_scalar("revdict-train/mse", loss.item(), next_step)
             optimizer.step()
-            pbar.update(electra_embs.size(0))
+            pbar.update(target_embs.size(0))
 
         pbar.close()
         ## eval loop
@@ -189,19 +194,22 @@ def train(args):
                     disable=None,
                     leave=False,
                 )
-                for word, gloss, electra, sgns in valid_dataloader:
+                for ids, word, gloss, electra, sgns in valid_dataloader:
                     word_tokens = tokenizer(word, padding=True, return_tensors='pt').to(args.device)
                     gloss_tokens = tokenizer(gloss, padding=True, return_tensors='pt').to(args.device)
-                    sgns_embs = torch.stack(sgns, dim=1).to(args.device)
-                    electra_embs = torch.stack(electra, dim=1).to(args.device).float()
+                    if args.target_arch == "electra":
+                        target_embs = torch.stack(electra, dim=1).to(args.device)
+                    else:
+                        target_embs = torch.stack(sgns, dim=1).to(args.device)
 
+                    target_embs = target_embs.float()
                     pred = model(**gloss_tokens)
                     sum_dev_loss += (
-                        F.mse_loss(pred, electra_embs, reduction="none").mean(1).sum().item()
+                        F.mse_loss(pred, target_embs, reduction="none").mean(1).sum().item()
                     )
-                    sum_cosine += F.cosine_similarity(pred, electra_embs).sum().item()
-                    sum_rnk += rank_cosine(pred, electra_embs)
-                    pbar.update(electra_embs.size(0))
+                    sum_cosine += F.cosine_similarity(pred, target_embs).sum().item()
+                    sum_rnk += rank_cosine(pred, target_embs)
+                    pbar.update(target_embs.size(0))
 
                 pbar = tqdm.tqdm(
                     desc=f"Eval {epoch} cos: "+str(sum_cosine / len(valid_dataset))+" mse: "+str( sum_dev_loss / len(valid_dataset) )+" rnk: "+str(sum_rnk/ len(valid_dataset))+ " sum_rnk: "+str(sum_rnk)+" len of dev: "+str(len(valid_dataset)) +"\n",
@@ -209,6 +217,12 @@ def train(args):
                     disable=None,
                     leave=False,
                 )
+
+                if sum_cosine >= best_cosine:
+                    best_cosine = sum_cosine
+                    print(f"Saving Best Checkpoint at Epoch {epoch}")
+                    model.save(args.save_dir / "model_best.pt")
+
                 # keep track of the average loss on dev set for this epoch
                 summary_writer.add_scalar(
                     "revdict-dev/cos", sum_cosine / len(valid_dataset), epoch
@@ -222,120 +236,48 @@ def train(args):
                 pbar.close()
                 model.train()
 
-        model.save(args.save_dir / "modelepoch.pt")
+        # model.save(args.save_dir / "modelepoch.pt")
             
     # 5. save result
-    model.save(args.save_dir / "model.pt")
-
-def eval(args):
-    assert args.dev_file is not None, "Missing dataset for eval"
-    # 1. get data, vocabulary, summary writer
-    ## make datasets
-    #train_dataset = data.JSONDataset(args.train_file)
-    train_vocab = data.JSONDataset.load(args.save_dir / "train_dataset.pt").vocab
-    model = models.RevdictModel.load(args.save_dir / "model.pt")
-    dev_dataset = data.JSONDataset(args.dev_file, vocab=train_vocab, freeze_vocab=True, maxlen=model.maxlen)
-    ## assert they correspond to the task
-    # assert train_dataset.has_gloss, "Training dataset contains no gloss."
-    # if args.target_arch == "electra":
-    #     assert train_dataset.has_electra, "Training datatset contains no vector."
-    # else:
-    #     assert train_dataset.has_vecs, "Training datatset contains no vector."
-    
-    assert dev_dataset.has_gloss, "Development dataset contains no gloss."
-    if args.target_arch == "electra":
-          assert dev_dataset.has_electra, "Development dataset contains no vector."
-    else:
-          assert dev_dataset.has_vecs, "Development dataset contains no vector."
-    ## make dataloader
-    # train_dataloader = data.get_dataloader(train_dataset, batch_size=512)
-    dev_dataloader = data.get_dataloader(dev_dataset, shuffle=False, batch_size=1024)
-    ## make summary writer
-    summary_writer = SummaryWriter(args.save_dir /args.summary_logdir)
-
-    # 2. construct model
-    ## Hyperparams
-    logger.debug("Setting up eval environment")
-   
-    # 3. declare optimizer & criterion
-    ## Hyperparams
-    EPOCHS, LEARNING_RATE, BETA1, BETA2, WEIGHT_DECAY = 10, 1.0e-4, 0.9, 0.999, 1.0e-6
-
-
-    vec_tensor_key = f"{args.target_arch}_tensor"
-
-    # 4. eval model
-    for epoch in tqdm.trange(EPOCHS, desc="Epochs"):
-        ## eval loop
-        if args.dev_file:
-            model.eval()
-            with torch.no_grad():
-                sum_dev_loss, sum_cosine, sum_rnk = 0.0, 0.0, 0.0
-                pbar = tqdm.tqdm(
-                    desc=f"Eval {epoch}",
-                    total=len(dev_dataset),
-                    disable=None,
-                    leave=False,
-                )
-                for batch in dev_dataloader:
-                    gls = batch["gloss_tensor"].to(args.device)
-                    vec = batch[vec_tensor_key].to(args.device)
-                    pred = model(gls)
-                    sum_dev_loss += (
-                        F.mse_loss(pred, vec, reduction="none").mean(1).sum().item()
-                    )
-                    sum_cosine += F.cosine_similarity(pred, vec).sum().item()
-                    sum_rnk += rank_cosine(pred, vec)
-                    pbar.update(vec.size(0))
-                # keep track of the average loss on dev set for this epoch
-                pbar = tqdm.tqdm(
-                    desc=f"Eval {epoch} cos: "+str(sum_cosine / len(dev_dataset))+" mse: "+str( sum_dev_loss / len(dev_dataset) )+" rnk: "+str(sum_rnk/ len(dev_dataset))+" sum_rnk: "+str(sum_rnk)+" len of dev: "+str(len(dev_dataset)) +"\n",
-                    total=len(dev_dataset),
-                    disable=None,
-                    leave=False,
-                )
-                summary_writer.add_scalar(
-                    "revdict-dev/cos", sum_cosine / len(dev_dataset), epoch
-                )
-                summary_writer.add_scalar(
-                    "revdict-dev/mse", sum_dev_loss / len(dev_dataset), epoch
-                )
-                summary_writer.add_scalar(
-                    "revdict-dev/rnk", sum_rnk / len(dev_dataset), epoch
-                )
-                pbar.close()
-            #model.train()
-
-    # 5. save result
     # model.save(args.save_dir / "model.pt")
-    # train_dataset.save(args.save_dir / "train_dataset.pt")
-    dev_dataset.save(args.save_dir / "dev_dataset.pt")
 
 
 def pred(args):
     assert args.test_file is not None, "Missing dataset for test"
     # 1. retrieve vocab, dataset, model
-    model = models.RevdictModel.load(args.save_dir / "model.pt")
-    train_vocab = data.JSONDataset.load(args.save_dir / "train_dataset.pt").vocab
-    test_dataset = data.JSONDataset(
-        args.test_file, vocab=train_vocab, freeze_vocab=True, maxlen=model.maxlen
-    )
-    test_dataloader = data.get_dataloader(test_dataset, shuffle=False, batch_size=1024)
+        ## make datasets
+    test_dataset = ARDDataset(args.dev_file, is_test=True)
+    
+    ## make dataloader
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size)
+
+    ## Hyperparams
+    logger.debug("Setting up training environment")
+
+    model = models.ARBERTRevDict(args).load(f"{args.save_dir}/model_best.pt")
+    model.to(args.device)
     model.eval()
+
+    tokenizer = AutoTokenizer.from_pretrained("UBC-NLP/ARBERTv2")     
+
     vec_tensor_key = f"{args.target_arch}_tensor"
-    assert test_dataset.has_gloss, "File is not usable for the task"
+
     # 2. make predictions
     predictions = []
     with torch.no_grad():
         pbar = tqdm.tqdm(desc="Pred.", total=len(test_dataset))
-        for batch in test_dataloader:
-            vecs = model(batch["gloss_tensor"].to(args.device)).cpu()
-            for id, word, vec in zip(batch["id"], batch["word"],vecs.unbind()):
+        for ids, words, gloss in test_dataloader:
+            word_tokens = tokenizer(words, padding=True, return_tensors='pt').to(args.device)
+            gloss_tokens = tokenizer(gloss, padding=True, return_tensors='pt').to(args.device)
+
+            vecs = model(**gloss_tokens).cpu()
+            for id, word, vec in zip(ids, words, vecs.unbind()):
                 predictions.append(
-                    {"id": id, "word": word, args.target_arch: vec.view(-1).cpu().tolist()}
+                    {"id": id, "word": word, args.target_arch: vec.view(-1).tolist()}
                 )
             pbar.update(vecs.size(0))
         pbar.close()
+
     with open(args.save_dir /args.pred_file, "w") as ostr:
         json.dump( predictions, ostr)
 
@@ -348,11 +290,6 @@ def main(args):
     if args.do_pred:
         logger.debug("Performing revdict prediction")
         pred(args)
-
-    if args.do_eval:
-        logger.debug("Performing revdict evaluation")
-        eval(args)
-
 
 if __name__ == "__main__":
     args = get_parser().parse_args()

@@ -32,7 +32,10 @@ class ARBERTRevDict(nn.Module):
     def save(self, file):
         torch.save(self, file)
 
-
+    @staticmethod
+    def load(file):
+        return torch.load(file)
+    
 class PositionalEncoding(nn.Module):
     """From PyTorch"""
 
