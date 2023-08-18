@@ -51,9 +51,9 @@ class ARBERTRevDict(nn.Module):
             raise NotImplementedError()
         else:
             if args.from_pretrained:
-                self.base_model = AutoModel.from_pretrained("UBC-NLP/ARBERTv2")
+                self.base_model = AutoModel.from_pretrained(args.model_name)
             else:
-                model_config = AutoConfig.from_pretrained("UBC-NLP/ARBERTv2")
+                model_config = AutoConfig.from_pretrained(args.model_name)
                 self.base_model = AutoModel.from_config(model_config)
         
         self.linear = nn.Linear(self.base_model.config.hidden_size, args.max_len)

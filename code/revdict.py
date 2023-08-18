@@ -47,6 +47,9 @@ def get_parser(
         "--from_pretrained", action="store_true", help="whether to load pretrained weights"
     )
     parser.add_argument(
+        "--model_name", type=str, help="HF model name"
+    )
+    parser.add_argument(
         "--resume_train",
          type=pathlib.Path,  
          help="where the model & vocab is saved",
@@ -131,7 +134,7 @@ def train(args):
 
     model = models.ARBERTRevDict(args).to(args.device)
 
-    tokenizer = AutoTokenizer.from_pretrained("UBC-NLP/ARBERTv2")     
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)     
     model.train()
 
     # 3. declare optimizer & criterion
