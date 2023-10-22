@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader
 
 import tqdm
 
-import data
 import models
 
 from transformers import AutoTokenizer

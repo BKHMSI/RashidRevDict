@@ -11,3 +11,4 @@ scores.txt
 !data/train-data_all.zip
 .DS_Store
 code/models/*
+outputs

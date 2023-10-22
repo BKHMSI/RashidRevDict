@@ -150,6 +150,107 @@ def closest_ranks(preds, targets,  targetsword=[] ):
 
     return [precision_at_1, precision_at_k]
 
+def eval_revdict_2(submission_file, reference_file, output_file):
+    # 1. read contents
+    ## read data files
+    with open(submission_file, "r") as fp:
+        submission = sorted(json.load(fp), key=lambda r: r["id"])
+    with open(reference_file, "r") as fp:
+        reference = sorted(json.load(fp), key=lambda r: r["id"])
+    # with open('/content/gdrive/MyDrive/sharedTask/lookups/Train.json', "r") as fp:
+    #     train = sorted(json.load(fp), key=lambda r: r["id"])
+    vec_archs = sorted(
+        set(submission[0].keys())
+        - {
+            "id",
+            "gloss",
+            "word",
+            "pos",
+            "concrete",
+            "example",
+            "f_rnk",
+            "counts",
+            "polysemous",
+        }
+    )
+    ## define accumulators for rank-cosine
+    all_preds = collections.defaultdict(list)
+    all_refs = collections.defaultdict(list)
+    # all_train = collections.defaultdict(list)
+
+  
+    
+    assert len(submission) == len(reference), "Missing items in submission!"
+    ## retrieve vectors
+    for sub, ref in zip(submission, reference):
+      assert sub["id"] == ref["id"], "Mismatch in submission and reference files!"
+      for arch in vec_archs:
+        all_preds[arch].append(sub[arch])
+        all_refs[arch].append(ref[arch])
+      all_refs["word"].append(ref["word"])
+    # for ii in range(len(train)):
+    #     all_train[arch].append(train[ii][arch])
+    #     all_train["word"].append(train[ii]["word"])
+
+    torch.autograd.set_grad_enabled(False)
+
+    # Convert all_train["word"] to a tensor of word strings
+    all_refs_word = all_refs["word"]
+    # all_train_word = all_train["word"]
+
+    all_preds = {arch: torch.tensor(all_preds[arch]) for arch in vec_archs}
+    all_refs = {arch: torch.tensor(all_refs[arch]) for arch in vec_archs}
+    # all_train= {arch: torch.tensor(all_train[arch]) for arch in vec_archs}
+
+
+    # 2. compute scores
+    MSE_scores = {
+        arch: F.mse_loss(all_preds[arch], all_refs[arch]).item() for arch in vec_archs
+    }
+    cos_scores = {
+        arch: F.cosine_similarity(all_preds[arch], all_refs[arch]).mean().item()
+        for arch in vec_archs
+    }
+    rnk_scores = {
+        arch: rank_cosine(all_preds[arch], all_refs[arch]) for arch in vec_archs
+    }
+    cos_closest_ranks={
+        arch: closest_ranks(all_preds[arch], all_refs[arch], all_refs_word ) for arch in vec_archs
+
+    }
+
+
+
+  # Adjust the threshold as needed
+
+    
+    # 3. display results
+    # logger.debug(f"Submission {args.submission_file}, \n\tMSE: " + \
+    #     ", ".join(f"{a}={MSE_scores[a]}" for a in vec_archs) + \
+    #     ", \n\tcosine: " + \
+    #     ", ".join(f"{a}={cos_scores[a]}" for a in vec_archs) + \
+    #     ", \n\tcosine ranks: " + \
+    #     ", ".join(f"{a}={rnk_scores[a]}" for a in vec_archs) + \
+    #     "."
+    # )
+    # all_archs = sorted(set(reference[0].keys()) - {"id", "gloss", "word", "pos"})
+    with open(output_file, "a") as ostr:
+        for arch in vec_archs:
+            print(f"MSE_task1_{arch}:{MSE_scores[arch]}", file=ostr)
+            print(f"cos_task1_{arch}:{cos_scores[arch]}", file=ostr)
+            print(f"rnk_task1_{arch}:{rnk_scores[arch]}", file=ostr)
+            print(f"precision_at_1_task1_{arch}:{cos_closest_ranks[arch][0]}", file=ostr)
+            print(f"precision_at_10_task1_{arch}:{cos_closest_ranks[arch][1]}", file=ostr)
+
+            
+
+    return (
+        *[MSE_scores.get(a, None) for a in vec_archs],
+        *[cos_scores.get(a, None) for a in vec_archs],
+        *[rnk_scores.get(a, None) for a in vec_archs],
+    )
+
+
 def eval_revdict(args, summary):
     # 1. read contents
     ## read data files
